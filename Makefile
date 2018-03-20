@@ -1,5 +1,5 @@
 ARM_CC ?= arm-linux-gnueabihf-gcc
-ARM_CFLAGS = -g -Wall -Wextra -O0 -mfpu=neon
+ARM_CFLAGS = -g -Wall -Wextra -O0 -mfpu=neon -l pthread
 EXEC = pipeline pipeline_flush
 
 GIT_HOOKS := .git/hooks/applied

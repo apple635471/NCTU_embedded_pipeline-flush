@@ -3,7 +3,11 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <arm_neon.h>
+#include <sys/mman.h>
+#include<fcntl.h>
 
 #define SIZE 1000000
 #define FILE_NAME "input.txt"
@@ -11,6 +15,7 @@
 long neon_iteration;
 
 float32_t mul(float *source,float *weight);
+
 void create_input(int size);
 
 static long diff_in_us(struct timespec t1, struct timespec t2)
@@ -33,20 +38,33 @@ int main(int argc, char *argv[])
     struct timespec start,end;
     float source[SIZE] ;
     float weight[SIZE] ;
-    char source_char[10];
-    char weight_char[10];
     FILE *fptr;
     create_input(SIZE);
-    fptr = fopen(FILE_NAME,"r");
-    for(int i = 0; i<SIZE; i++) {
-        fscanf(fptr,"%s %s %f %f\n",source_char,weight_char,&source[i],&weight[i]);
+    fptr = fopen(FILE_NAME,"rb");
+    int fd;
+    fd = fileno(fptr);
+    struct stat st;
+    int r = fstat(fd, &st);
+    float *begin = (float *)mmap(NULL, st.st_size, PROT_READ,MAP_SHARED, fd, 0);
+    for(int i = 0; i < SIZE; i++) {
+        source[i] = begin[i * 2];
+        weight[i] = begin[i * 2 + 1];
     }
+    fclose(fptr);
+    /*for(int i = 0; i<SIZE; i++) {
+        fscanf(fptr,"%f%f",&source[i],&weight[i]);
+        fread(&source[i], sizeof(source[0]), 1, fptr);
+        fread(&weight[i], sizeof(source[0]), 1, fptr);
+    }
+    fclose(fptr);*/
     clock_gettime(CLOCK_REALTIME,&start);
     printf("output:  %f\n",mul(source,weight));
     clock_gettime(CLOCK_REALTIME,&end);
     printf("spend:  %ld us\n",diff_in_us(start,end));
+    munmap(begin, st.st_size);
     return 0;
 }
+
 
 float32_t mul(float *source,float *weights)
 {
@@ -86,10 +104,15 @@ void create_input(int size)
         return;
     }
 
-    fptr = fopen(FILE_NAME,"w");
+    fptr = fopen(FILE_NAME,"wb");
     srand(time(NULL));
     for(int i = 0; i<size; i++) {
-        fprintf(fptr,"source weight %f %f\n",(float32_t)(rand()%4)+1,(float32_t)(rand()%4)+1);
+        //fprintf(fptr,"%f%f",(float32_t)(rand()%4)+1,(float32_t)(rand()%4)+1);
+        float f1, f2;
+        f1 =  (float32_t)(rand()%4)+1;
+        f2 =  (float32_t)(rand()%4)+1;
+        fwrite(&f1, sizeof(f1), 1, fptr);
+        fwrite(&f1, sizeof(f2), 1, fptr);
     }
     fclose(fptr);
 }
