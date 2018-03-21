@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -7,14 +8,25 @@
 #include <sys/stat.h>
 #include <arm_neon.h>
 #include <sys/mman.h>
-#include<fcntl.h>
+#include <fcntl.h>
+
 
 #define SIZE 1000000
 #define FILE_NAME "input.txt"
+struct args {
+    int offset;
+};
 
+float * begin;
+float source[SIZE] ;
+float weight[SIZE] ;
 long neon_iteration;
 
-float32_t mul(float *source,float *weight);
+pthread_t pid1, pid2, pid3, pid4;
+float32_t part_result[4] = {0.0, 0.0, 0.0, 0.0};
+
+//float32_t mul(float *source,float *weight);
+void * mul(void * argument);
 
 void create_input(int size);
 
@@ -36,8 +48,7 @@ int main(int argc, char *argv[])
 {
 
     struct timespec start,end;
-    float source[SIZE] ;
-    float weight[SIZE] ;
+    clock_gettime(CLOCK_REALTIME,&start);
     FILE *fptr;
     create_input(SIZE);
     fptr = fopen(FILE_NAME,"rb");
@@ -45,28 +56,88 @@ int main(int argc, char *argv[])
     fd = fileno(fptr);
     struct stat st;
     int r = fstat(fd, &st);
-    float *begin = (float *)mmap(NULL, st.st_size, PROT_READ,MAP_SHARED, fd, 0);
-    for(int i = 0; i < SIZE; i++) {
+    begin = (float *)mmap(NULL, st.st_size, PROT_READ,MAP_SHARED, fd, 0);
+    int rc, rc1, rc2, rc3, rc4;
+    struct args args_1;
+    args_1.offset = 0;
+    struct args args_2;
+    args_2.offset = 1;
+    struct args args_3;
+    args_3.offset = 2;
+    struct args args_4;
+    args_4.offset = 3;
+    rc1 = pthread_create( &pid1, NULL, &mul, (void *) &args_1 );
+    rc2 = pthread_create( &pid2, NULL, &mul, (void *) &args_2 );
+    rc3 = pthread_create( &pid3, NULL, &mul, (void *) &args_3 );
+    rc4 = pthread_create( &pid4, NULL, &mul, (void *) &args_4 );
+
+    /*for(int i = 0; i < SIZE; i++) {
         source[i] = begin[i * 2];
         weight[i] = begin[i * 2 + 1];
-    }
-    fclose(fptr);
+    }*/
+
     /*for(int i = 0; i<SIZE; i++) {
         fscanf(fptr,"%f%f",&source[i],&weight[i]);
         fread(&source[i], sizeof(source[0]), 1, fptr);
         fread(&weight[i], sizeof(source[0]), 1, fptr);
     }
     fclose(fptr);*/
-    clock_gettime(CLOCK_REALTIME,&start);
-    printf("output:  %f\n",mul(source,weight));
+
+    //printf("output:  %f\n",mul(source,weight));
+    rc = pthread_join(pid1,NULL);
+    rc = pthread_join(pid2,NULL);
+    rc = pthread_join(pid3,NULL);
+    rc = pthread_join(pid4,NULL);
+    printf("output: %f\n", part_result[0] + part_result[1] + part_result[2] + part_result[3]);
     clock_gettime(CLOCK_REALTIME,&end);
     printf("spend:  %ld us\n",diff_in_us(start,end));
+    fclose(fptr);
     munmap(begin, st.st_size);
     return 0;
 }
 
+void * mul(void * argument)
+{
+    struct args *arg = (struct args *)argument;
+    int offset = arg->offset;
+    int base_addr = offset * (SIZE/4);
+    for(int i = 0; i < SIZE/4; i++) {
+        source[i + base_addr] = begin[i * 2 + base_addr * 2];
+        weight[i + base_addr] = begin[i * 2 + 1 + base_addr * 2];
+    }
 
-float32_t mul(float *source,float *weights)
+    float32x4_t in1_128,in2_128,sum1,sum2,prod;
+    float32_t result[4];
+    //float32_t output = 0.0;
+
+    prod = vmovq_n_f32(0.0f);
+    for (int i=0; i<SIZE/4; i+=4) {
+        in1_128 = vld1q_f32(&source[i + base_addr]);
+        in2_128 = vld1q_f32(&weight[i + base_addr]);
+
+        prod = vmulq_f32(in1_128, in2_128);
+        sum1 = vaddq_f32(prod, vrev64q_f32(prod));
+        sum2 = vaddq_f32(sum1, vcombine_f32(vget_high_f32(sum1), vget_low_f32(sum1)));
+        vst1q_f32((float32_t *)result, sum2);
+        //output += result[0];
+        part_result[offset] += result[0];
+
+#ifdef NON_FLUSH
+        prod = vmlaq_f32(prod, in1_128, in2_128);
+#endif
+    }
+#ifdef NON_FLUSH
+    sum1 = vaddq_f32(prod, vrev64q_f32(prod));
+    sum2 = vaddq_f32(sum1, vcombine_f32(vget_high_f32(sum1), vget_low_f32(sum1)));
+    vst1q_f32((float32_t *)result, sum2);
+    part_result[offset] = result[0];
+    //output = result[0];
+#endif
+    pthread_exit(NULL);
+    //return output;
+}
+
+/*float32_t mul(float *source,float *weights)
 {
     float32x4_t in1_128,in2_128,sum1,sum2,prod;
     float32_t result[4];
@@ -95,7 +166,7 @@ float32_t mul(float *source,float *weights)
 #endif
 
     return output;
-}
+}*/
 
 void create_input(int size)
 {
@@ -106,7 +177,7 @@ void create_input(int size)
 
     fptr = fopen(FILE_NAME,"wb");
     srand(time(NULL));
-    for(int i = 0; i<size; i++) {
+    for(int i = 0; i<SIZE; i++) {
         //fprintf(fptr,"%f%f",(float32_t)(rand()%4)+1,(float32_t)(rand()%4)+1);
         float f1, f2;
         f1 =  (float32_t)(rand()%4)+1;
