@@ -12,9 +12,10 @@
 
 
 #define SIZE 1000000
+#define THREAD_SIZE 250000
 #define FILE_NAME "input.txt"
 struct args {
-    int offset;
+    unsigned int offset;
 };
 
 float * begin;
@@ -48,7 +49,7 @@ int main(int argc, char *argv[])
 {
 
     struct timespec start,end;
-    clock_gettime(CLOCK_REALTIME,&start);
+    //clock_gettime(CLOCK_REALTIME,&start);
     FILE *fptr;
     create_input(SIZE);
     fptr = fopen(FILE_NAME,"rb");
@@ -66,6 +67,7 @@ int main(int argc, char *argv[])
     args_3.offset = 2;
     struct args args_4;
     args_4.offset = 3;
+    clock_gettime(CLOCK_REALTIME,&start);
     rc1 = pthread_create( &pid1, NULL, &mul, (void *) &args_1 );
     rc2 = pthread_create( &pid2, NULL, &mul, (void *) &args_2 );
     rc3 = pthread_create( &pid3, NULL, &mul, (void *) &args_3 );
@@ -77,7 +79,7 @@ int main(int argc, char *argv[])
     }*/
 
     /*for(int i = 0; i<SIZE; i++) {
-        fscanf(fptr,"%f%f",&source[i],&weight[i]);
+        //fscanf(fptr,"%f%f",&source[i],&weight[i]);
         fread(&source[i], sizeof(source[0]), 1, fptr);
         fread(&weight[i], sizeof(source[0]), 1, fptr);
     }
@@ -89,21 +91,22 @@ int main(int argc, char *argv[])
     rc = pthread_join(pid3,NULL);
     rc = pthread_join(pid4,NULL);
     printf("output: %f\n", part_result[0] + part_result[1] + part_result[2] + part_result[3]);
-    clock_gettime(CLOCK_REALTIME,&end);
-    printf("spend:  %ld us\n",diff_in_us(start,end));
     fclose(fptr);
     munmap(begin, st.st_size);
+    clock_gettime(CLOCK_REALTIME,&end);
+    printf("spend:  %ld us\n",diff_in_us(start,end));
+
     return 0;
 }
 
 void * mul(void * argument)
 {
     struct args *arg = (struct args *)argument;
-    int offset = arg->offset;
-    int base_addr = offset * (SIZE/4);
-    for(int i = 0; i < SIZE/4; i++) {
-        source[i + base_addr] = begin[i * 2 + base_addr * 2];
-        weight[i + base_addr] = begin[i * 2 + 1 + base_addr * 2];
+    unsigned int offset = arg->offset;
+    unsigned int base_addr = offset * THREAD_SIZE;
+    for(unsigned int i = 0; i < THREAD_SIZE; i++) {
+        source[i + base_addr] = begin[(i + base_addr) * 2];
+        weight[i + base_addr] = begin[(i + base_addr) * 2 + 1];
     }
 
     float32x4_t in1_128,in2_128,sum1,sum2,prod;
@@ -111,17 +114,17 @@ void * mul(void * argument)
     //float32_t output = 0.0;
 
     prod = vmovq_n_f32(0.0f);
-    for (int i=0; i<SIZE/4; i+=4) {
+    for (unsigned int i=0; i < THREAD_SIZE; i+=4) {
         in1_128 = vld1q_f32(&source[i + base_addr]);
         in2_128 = vld1q_f32(&weight[i + base_addr]);
-
+#ifdef FLUSH
         prod = vmulq_f32(in1_128, in2_128);
         sum1 = vaddq_f32(prod, vrev64q_f32(prod));
         sum2 = vaddq_f32(sum1, vcombine_f32(vget_high_f32(sum1), vget_low_f32(sum1)));
         vst1q_f32((float32_t *)result, sum2);
         //output += result[0];
         part_result[offset] += result[0];
-
+#endif
 #ifdef NON_FLUSH
         prod = vmlaq_f32(prod, in1_128, in2_128);
 #endif
